@@ -1,0 +1,38 @@
+{
+  "rules": [
+    {
+      "rule-type": "selection",
+      "rule-id": "1",
+      "rule-name": "1",
+      "object-locator": {
+        "schema-name": "your_schema_name",
+        "table-name": "test_user"
+      },
+      "rule-action": "include"
+    }
+  ],
+  "table-settings": {
+    "your_schema_name.test_user": {
+      "columns": {
+        "user_id": {
+          "type": "INT",
+          "primary-key": true
+        },
+        "username": {
+          "type": "VARCHAR",
+          "length": 50,
+          "nullable": false
+        },
+        "email": {
+          "type": "VARCHAR",
+          "length": 100,
+          "nullable": false
+        },
+        "created_at": {
+          "type": "TIMESTAMP",
+          "default": "CURRENT_TIMESTAMP"
+        }
+      }
+    }
+  }
+}
