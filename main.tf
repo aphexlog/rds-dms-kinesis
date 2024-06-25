@@ -80,14 +80,14 @@ resource "aws_security_group" "dms_security_group" {
   }
 }
 
-resource "aws_db_instance" "mysql_rds_instance" {
+resource "aws_db_instance" "postgresql_rds_instance" {
   allocated_storage      = 20
-  engine                 = "mysql"
-  engine_version         = "8.0"
+  engine                 = "postgres"
+  engine_version         = "16.3-R2"
   instance_class         = "db.r5d.large"
   username               = "admin"
   password               = "password"
-  parameter_group_name   = "default.mysql8.0"
+  parameter_group_name   = "default.postgres16"
   skip_final_snapshot    = true
   publicly_accessible    = true
   vpc_security_group_ids = [aws_security_group.dms_security_group.id]
@@ -132,13 +132,13 @@ resource "aws_dms_replication_instance" "dms_replication_instance" {
   ]
 }
 
-resource "aws_dms_endpoint" "mysql_source_endpoint" {
-  endpoint_id   = "mysql-source-endpoint"
+resource "aws_dms_endpoint" "postgresql_source_endpoint" {
+  endpoint_id   = "postgresql-source-endpoint"
   endpoint_type = "source"
-  engine_name   = "mysql"
-  username      = aws_db_instance.mysql_rds_instance.username
-  password      = aws_db_instance.mysql_rds_instance.password
-  server_name   = aws_db_instance.mysql_rds_instance.address
+  engine_name   = "postgresql"
+  username      = aws_db_instance.postgresql_rds_instance.username
+  password      = aws_db_instance.postgresql_rds_instance.password
+  server_name   = aws_db_instance.postgresql_rds_instance.address
   port          = 3306
   database_name = "source_database"
 }
@@ -159,7 +159,7 @@ resource "aws_dms_endpoint" "kinesis_target_endpoint" {
 
 resource "aws_dms_replication_task" "dms_replication_task" {
   replication_task_id          = "dms-replication-task"
-  source_endpoint_arn          = aws_dms_endpoint.mysql_source_endpoint.endpoint_arn
+  source_endpoint_arn          = aws_dms_endpoint.postgresql_source_endpoint.endpoint_arn
   target_endpoint_arn          = aws_dms_endpoint.kinesis_target_endpoint.endpoint_arn
   migration_type               = "full-load-and-cdc"
   table_mappings               = file("table-mappings.json")
@@ -167,11 +167,11 @@ resource "aws_dms_replication_task" "dms_replication_task" {
   replication_instance_arn     = aws_dms_replication_instance.dms_replication_instance.replication_instance_arn
 
   depends_on = [
-    aws_dms_endpoint.mysql_source_endpoint,
+    aws_dms_endpoint.postgresql_source_endpoint,
     aws_dms_endpoint.kinesis_target_endpoint
   ]
 }
 
 output "aws_db_instance" {
-  value = "${aws_db_instance.mysql_rds_instance.address}"
+  value = "${aws_db_instance.postgresql_rds_instance.address}"
 }
