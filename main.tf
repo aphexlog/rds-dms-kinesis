@@ -38,7 +38,12 @@ resource "aws_iam_role_policy" "dms_vpc_role_policy" {
           "ec2:Describe*",
           "ec2:CreateNetworkInterface",
           "ec2:DeleteNetworkInterface",
-          "ec2:DescribeNetworkInterfaces"
+          "ec2:DescribeNetworkInterfaces",
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogGroups",
+          "logs:DescribeLogStreams"
         ],
         Resource = "*"
       }
@@ -46,10 +51,15 @@ resource "aws_iam_role_policy" "dms_vpc_role_policy" {
   })
 }
 
-resource "aws_security_group" "rds_dms_kinesis_security_group" {
-  name        = "rds-dms-kinesis-security-group"
-  description = "Allow inbound traffic"
-  vpc_id      = "vpc-5f9fb825"
+resource "aws_iam_role_policy_attachment" "dms_vpc_role_policy_attachment" {
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+  role       = aws_iam_role.dms_vpc_role.name
+}
+
+resource "aws_security_group" "dms_security_group" {
+  name        = "dms-security-group"
+  description = "Allow inbound and outbound traffic for DMS"
+  vpc_id      = "vpc-0aae280cf7c7cc088"
 
   ingress {
     from_port   = 3306
@@ -57,9 +67,20 @@ resource "aws_security_group" "rds_dms_kinesis_security_group" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "DMS-Migration-SG"
+  }
 }
 
-resource "aws_db_instance" "rds_dms_kinesis_rds_instance" {
+resource "aws_db_instance" "mysql_rds_instance" {
   allocated_storage      = 20
   engine                 = "mysql"
   engine_version         = "8.0"
@@ -68,76 +89,89 @@ resource "aws_db_instance" "rds_dms_kinesis_rds_instance" {
   password               = "password"
   parameter_group_name   = "default.mysql8.0"
   skip_final_snapshot    = true
-  vpc_security_group_ids = [aws_security_group.rds_dms_kinesis_security_group.id]
+  publicly_accessible    = true
+  vpc_security_group_ids = [aws_security_group.dms_security_group.id]
+  db_name                = "source_database"
 
   depends_on = [
-    aws_kinesis_stream.rds_dms_kinesis_stream,
+    aws_kinesis_stream.dms_kinesis_stream,
   ]
 }
 
-resource "aws_kinesis_stream" "rds_dms_kinesis_stream" {
-  name             = "rds_dms_kinesis_stream"
-  shard_count      = 1
+resource "aws_kinesis_stream" "dms_kinesis_stream" {
+  name             = "dms_kinesis_stream"
   retention_period = 24
+
+  stream_mode_details {
+    stream_mode = "ON_DEMAND"
+  }
 }
 
-resource "aws_dms_replication_instance" "rds_dms_kinesis_dms_instance" {
-  replication_instance_class = "dms.t3.micro"
-  allocated_storage          = 100
-  engine_version             = "3.5.1"
-  replication_instance_id    = "rds-dms-kinesis-dms-instance"
-  vpc_security_group_ids = [aws_security_group.rds_dms_kinesis_security_group.id]
-  replication_subnet_group_id = aws_dms_replication_subnet_group.rds_dms_kinesis_subnet_group.replication_subnet_group_id
+resource "aws_dms_replication_subnet_group" "dms_replication_subnet_group" {
+  replication_subnet_group_id          = "dms-replication-subnet-group"
+  subnet_ids                           = ["subnet-0ef865767f6f75513", "subnet-01a76e54e029c5209"]
+  replication_subnet_group_description = "Replication subnet group for DMS"
+
+  tags = {
+    Name = "dms-replication-subnet-group"
+  }
+}
+
+resource "aws_dms_replication_instance" "dms_replication_instance" {
+  replication_instance_class   = "dms.t3.micro"
+  apply_immediately            = true
+  allocated_storage            = 100
+  engine_version               = "3.5.1"
+  replication_instance_id      = "dms-replication-instance"
+  vpc_security_group_ids       = [aws_security_group.dms_security_group.id]
+  replication_subnet_group_id  = aws_dms_replication_subnet_group.dms_replication_subnet_group.replication_subnet_group_id
+  publicly_accessible          = true
+
   depends_on = [
-    aws_kinesis_stream.rds_dms_kinesis_stream,
+    aws_kinesis_stream.dms_kinesis_stream,
   ]
 }
 
-resource "aws_dms_endpoint" "rds_dms_kinesis_source_endpoint" {
-  endpoint_id   = "rds-dms-kinesis-source-endpoint"
+resource "aws_dms_endpoint" "mysql_source_endpoint" {
+  endpoint_id   = "mysql-source-endpoint"
   endpoint_type = "source"
   engine_name   = "mysql"
-  username      = aws_db_instance.rds_dms_kinesis_rds_instance.username
-  password      = aws_db_instance.rds_dms_kinesis_rds_instance.password
-  server_name   = aws_db_instance.rds_dms_kinesis_rds_instance.address
+  username      = aws_db_instance.mysql_rds_instance.username
+  password      = aws_db_instance.mysql_rds_instance.password
+  server_name   = aws_db_instance.mysql_rds_instance.address
   port          = 3306
   database_name = "source_database"
 }
 
-resource "aws_dms_replication_subnet_group" "rds_dms_kinesis_subnet_group" {
-  replication_subnet_group_id = "rds-dms-kinesis-subnet-group"
-  subnet_ids = ["subnet-744c4613", "subnet-54b7e96a"]
-  replication_subnet_group_description = "Replication subnet group for RDS DMS Kinesis"
-
-  tags = {
-    Name = "rds-dms-kinesis-subnet-group"
-  }
-}
-
-resource "aws_dms_endpoint" "rds_dms_kinesis_target_endpoint" {
-  endpoint_id   = "rds-dms-kinesis-target-endpoint"
+resource "aws_dms_endpoint" "kinesis_target_endpoint" {
+  endpoint_id   = "kinesis-target-endpoint"
   endpoint_type = "target"
   engine_name   = "kinesis"
+
   kinesis_settings {
-    message_format = "json"
-    stream_arn     = aws_kinesis_stream.rds_dms_kinesis_stream.arn
+    message_format         = "json"
+    stream_arn             = aws_kinesis_stream.dms_kinesis_stream.arn
     service_access_role_arn = aws_iam_role.dms_vpc_role.arn
   }
 
-  depends_on = [ aws_kinesis_stream.rds_dms_kinesis_stream ]
+  depends_on = [aws_kinesis_stream.dms_kinesis_stream]
 }
 
-resource "aws_dms_replication_task" "rds_dms_kinesis_replication_task" {
-  replication_task_id = "rds-dms-kinesis-task"
-  source_endpoint_arn = aws_dms_endpoint.rds_dms_kinesis_source_endpoint.endpoint_arn
-  target_endpoint_arn = aws_dms_endpoint.rds_dms_kinesis_target_endpoint.endpoint_arn
-  migration_type      = "cdc"
-  table_mappings      = file("table-mappings.json")
-  # replication_task_settings = file("task-settings.json")
-  replication_instance_arn = aws_dms_replication_instance.rds_dms_kinesis_dms_instance.replication_instance_arn
+resource "aws_dms_replication_task" "dms_replication_task" {
+  replication_task_id          = "dms-replication-task"
+  source_endpoint_arn          = aws_dms_endpoint.mysql_source_endpoint.endpoint_arn
+  target_endpoint_arn          = aws_dms_endpoint.kinesis_target_endpoint.endpoint_arn
+  migration_type               = "full-load-and-cdc"
+  table_mappings               = file("table-mappings.json")
+  # replication_task_settings    = file("task-settings.json")
+  replication_instance_arn     = aws_dms_replication_instance.dms_replication_instance.replication_instance_arn
 
   depends_on = [
-    aws_dms_endpoint.rds_dms_kinesis_source_endpoint,
-    aws_dms_endpoint.rds_dms_kinesis_target_endpoint
+    aws_dms_endpoint.mysql_source_endpoint,
+    aws_dms_endpoint.kinesis_target_endpoint
   ]
+}
+
+output "aws_db_instance" {
+  value = "${aws_db_instance.mysql_rds_instance.address}"
 }
