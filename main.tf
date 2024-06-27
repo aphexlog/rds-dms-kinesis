@@ -1,5 +1,5 @@
 provider "aws" {
-  region = "us-east-1"
+  region = var.region
 }
 
 resource "aws_iam_role" "dms_vpc_role" {
@@ -59,7 +59,7 @@ resource "aws_iam_role_policy_attachment" "dms_vpc_role_policy_attachment" {
 resource "aws_security_group" "dms_security_group" {
   name        = "dms-security-group"
   description = "Allow inbound and outbound traffic for DMS"
-  vpc_id      = "vpc-0aae280cf7c7cc088"
+  vpc_id      = var.vpc_id
 
   ingress {
     from_port   = 3306
@@ -85,8 +85,8 @@ resource "aws_db_instance" "postgresql_rds_instance" {
   engine                 = "postgres"
   engine_version         = "16.3-R2"
   instance_class         = "db.r5d.large"
-  username               = "admin"
-  password               = "password"
+  username               = var.db_username
+  password               = var.db_password
   parameter_group_name   = "default.postgres16"
   skip_final_snapshot    = true
   publicly_accessible    = true
@@ -109,7 +109,7 @@ resource "aws_kinesis_stream" "dms_kinesis_stream" {
 
 resource "aws_dms_replication_subnet_group" "dms_replication_subnet_group" {
   replication_subnet_group_id          = "dms-replication-subnet-group"
-  subnet_ids                           = ["subnet-0ef865767f6f75513", "subnet-01a76e54e029c5209"]
+  subnet_ids                           = [var.subnet_ids[0], var.subnet_ids[1]]
   replication_subnet_group_description = "Replication subnet group for DMS"
 
   tags = {
@@ -118,14 +118,14 @@ resource "aws_dms_replication_subnet_group" "dms_replication_subnet_group" {
 }
 
 resource "aws_dms_replication_instance" "dms_replication_instance" {
-  replication_instance_class   = "dms.t3.micro"
-  apply_immediately            = true
-  allocated_storage            = 100
-  engine_version               = "3.5.1"
-  replication_instance_id      = "dms-replication-instance"
-  vpc_security_group_ids       = [aws_security_group.dms_security_group.id]
-  replication_subnet_group_id  = aws_dms_replication_subnet_group.dms_replication_subnet_group.replication_subnet_group_id
-  publicly_accessible          = true
+  replication_instance_class  = "dms.t3.micro"
+  apply_immediately           = true
+  allocated_storage           = 100
+  engine_version              = "3.5.1"
+  replication_instance_id     = "dms-replication-instance"
+  vpc_security_group_ids      = [aws_security_group.dms_security_group.id]
+  replication_subnet_group_id = aws_dms_replication_subnet_group.dms_replication_subnet_group.replication_subnet_group_id
+  publicly_accessible         = true
 
   depends_on = [
     aws_kinesis_stream.dms_kinesis_stream,
@@ -149,8 +149,8 @@ resource "aws_dms_endpoint" "kinesis_target_endpoint" {
   engine_name   = "kinesis"
 
   kinesis_settings {
-    message_format         = "json"
-    stream_arn             = aws_kinesis_stream.dms_kinesis_stream.arn
+    message_format          = "json"
+    stream_arn              = aws_kinesis_stream.dms_kinesis_stream.arn
     service_access_role_arn = aws_iam_role.dms_vpc_role.arn
   }
 
@@ -158,13 +158,13 @@ resource "aws_dms_endpoint" "kinesis_target_endpoint" {
 }
 
 resource "aws_dms_replication_task" "dms_replication_task" {
-  replication_task_id          = "dms-replication-task"
-  source_endpoint_arn          = aws_dms_endpoint.postgresql_source_endpoint.endpoint_arn
-  target_endpoint_arn          = aws_dms_endpoint.kinesis_target_endpoint.endpoint_arn
-  migration_type               = "full-load-and-cdc"
-  table_mappings               = file("table-mappings.json")
+  replication_task_id = "dms-replication-task"
+  source_endpoint_arn = aws_dms_endpoint.postgresql_source_endpoint.endpoint_arn
+  target_endpoint_arn = aws_dms_endpoint.kinesis_target_endpoint.endpoint_arn
+  migration_type      = "full-load-and-cdc"
+  table_mappings      = file("table-mappings.json")
   # replication_task_settings    = file("task-settings.json")
-  replication_instance_arn     = aws_dms_replication_instance.dms_replication_instance.replication_instance_arn
+  replication_instance_arn = aws_dms_replication_instance.dms_replication_instance.replication_instance_arn
 
   depends_on = [
     aws_dms_endpoint.postgresql_source_endpoint,
@@ -173,5 +173,5 @@ resource "aws_dms_replication_task" "dms_replication_task" {
 }
 
 output "aws_db_instance" {
-  value = "${aws_db_instance.postgresql_rds_instance.address}"
+  value = aws_db_instance.postgresql_rds_instance.address
 }
