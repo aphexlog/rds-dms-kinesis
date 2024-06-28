@@ -83,7 +83,7 @@ resource "aws_security_group" "dms_security_group" {
 resource "aws_db_instance" "postgresql_rds_instance" {
   allocated_storage      = 20
   engine                 = "postgres"
-  engine_version         = "16.3-R2"
+  engine_version         = "16.3"
   instance_class         = "db.r5d.large"
   username               = var.db_username
   password               = var.db_password
@@ -91,11 +91,8 @@ resource "aws_db_instance" "postgresql_rds_instance" {
   skip_final_snapshot    = true
   publicly_accessible    = true
   vpc_security_group_ids = [aws_security_group.dms_security_group.id]
-  db_name                = "source_database"
+  db_name                = var.db_name
 
-  depends_on = [
-    aws_kinesis_stream.dms_kinesis_stream,
-  ]
 }
 
 resource "aws_kinesis_stream" "dms_kinesis_stream" {
@@ -127,20 +124,21 @@ resource "aws_dms_replication_instance" "dms_replication_instance" {
   replication_subnet_group_id = aws_dms_replication_subnet_group.dms_replication_subnet_group.replication_subnet_group_id
   publicly_accessible         = true
 
-  depends_on = [
-    aws_kinesis_stream.dms_kinesis_stream,
-  ]
+  depends_on = [aws_dms_replication_subnet_group.dms_replication_subnet_group,
+  aws_security_group.dms_security_group]
 }
 
 resource "aws_dms_endpoint" "postgresql_source_endpoint" {
   endpoint_id   = "postgresql-source-endpoint"
   endpoint_type = "source"
-  engine_name   = "postgresql"
+  engine_name   = "postgres"
   username      = aws_db_instance.postgresql_rds_instance.username
   password      = aws_db_instance.postgresql_rds_instance.password
   server_name   = aws_db_instance.postgresql_rds_instance.address
   port          = 3306
-  database_name = "source_database"
+  database_name = var.db_name
+
+  depends_on = [aws_db_instance.postgresql_rds_instance]
 }
 
 resource "aws_dms_endpoint" "kinesis_target_endpoint" {
@@ -158,15 +156,16 @@ resource "aws_dms_endpoint" "kinesis_target_endpoint" {
 }
 
 resource "aws_dms_replication_task" "dms_replication_task" {
-  replication_task_id = "dms-replication-task"
-  source_endpoint_arn = aws_dms_endpoint.postgresql_source_endpoint.endpoint_arn
-  target_endpoint_arn = aws_dms_endpoint.kinesis_target_endpoint.endpoint_arn
-  migration_type      = "full-load-and-cdc"
-  table_mappings      = file("table-mappings.json")
-  # replication_task_settings    = file("task-settings.json")
-  replication_instance_arn = aws_dms_replication_instance.dms_replication_instance.replication_instance_arn
+  replication_task_id       = "dms-replication-task"
+  source_endpoint_arn       = aws_dms_endpoint.postgresql_source_endpoint.endpoint_arn
+  target_endpoint_arn       = aws_dms_endpoint.kinesis_target_endpoint.endpoint_arn
+  migration_type            = "full-load-and-cdc"
+  table_mappings            = file("table-mappings.json")
+  replication_task_settings = file("task-settings.json")
+  replication_instance_arn  = aws_dms_replication_instance.dms_replication_instance.replication_instance_arn
 
   depends_on = [
+    aws_dms_replication_instance.dms_replication_instance,
     aws_dms_endpoint.postgresql_source_endpoint,
     aws_dms_endpoint.kinesis_target_endpoint
   ]
